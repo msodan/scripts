@@ -1,0 +1,2 @@
+hardstatus alwayslastline
+hardstatus string '%{= kG} aurora.inovex [%= %{= kw}%?%-Lw%?%{r}[%{W}%n*%f %t%?{%u}%?%{r}]%{w}%?%+Lw%?%?%= %{g}] %{W}%{g}%{.w} screen %{.c} [%H]'
