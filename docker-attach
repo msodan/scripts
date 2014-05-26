@@ -1,0 +1,4 @@
+#!/bin/bash
+
+[[ -z "$1" ]] && echo "Usage: $0 <CID>" && exit 1
+nsenter  --mount --uts --ipc --net --pid --target $(docker inspect --format '{{ .State.Pid }}' "$1")

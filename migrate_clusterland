@@ -1,0 +1,332 @@
+#!/bin/bash
+
+##########################################
+# Debian Migration for Clusterland       #
+# created Fr 31. Jan 18:10:54 CET 2014   #
+# msodan@inovex.de                       #
+# only run as root if you know what      #
+# the script does!                       #
+##########################################
+
+# local vars which are needed
+HOST=`hostname`
+DATE=`/bin/date +'%Y-%m-%d'`
+
+# checks the return code of the executed program
+function check () {
+  $1
+   if [ $? != 0 ]
+      then
+         echo "$1 failed ... exiting"
+         exit 1
+      else
+         echo "$1 succeed ... next command"
+   fi
+}
+
+# simply echo some seperations
+function line {
+	echo "-------------------------------------------"
+}
+
+# showhelp function
+function showhelp {
+   line
+   echo "$0 options:"
+   echo "-S    Stop the defined services on $HOST"
+   echo "-6    Upgrade Debian from 5 to 6"
+   echo "-7    Upgrade Debian from 6 to 7"
+   echo "-M    Fix the MySQL"
+   echo "-B    Backup the complete mysql"
+   echo "-h    This help"
+   line
+   exit 1
+}
+
+# Stop services on Host vm213
+function stop_services_vm213 {
+      check "/etc/init.d/apache2 stop"
+      check "/etc/init.d/cron stop"
+      check "/etc/init.d/nrpe stop"
+}
+
+# Stop services on Host vm214
+function stop_services_vm214 {
+      check "/etc/init.d/liferay stop"
+      check "/etc/init.d/cron stop"
+      check "/etc/init.d/nrpe stop"
+}
+
+# Stop services on Host vm215
+function stop_services_vm215 {
+      check "/etc/init.d/mysql stop"
+      check "/etc/init.d/cron stop"
+      check "/etc/init.d/nrpe stop"
+      check "/etc/init.d/exim4 stop"
+}
+
+# edit the sources.list file
+function edit_sources_squeeze {
+   echo "deb http://ftp.de.debian.org/debian/ squeeze main contrib non-free" > /etc/apt/sources.list
+	echo "deb-src http://ftp.de.debian.org/debian/ squeeze main" >> /etc/apt/sources.list
+	echo "deb http://security.debian.org/ squeeze/updates main" >> /etc/apt/sources.list
+	echo "deb-src http://security.debian.org/ squeeze/updates main" >> /etc/apt/sources.list
+}
+
+# Upgrade from deb5 to deb6
+function upgrade_to_squeeze {
+	check "dpkg --get-selections"
+	echo "Please check if packets are on Hold ... sleeping for 10sec"
+	sleep 10
+	check "apt-get clean"
+	check "apt-get update"
+	check "apt-get dist-upgrade"
+	check "upgrade-from-grub-legacy"
+	echo "Done ... please reboot now"
+}
+
+# edit the sources.list file
+function edit_sources_wheezy {
+   echo "deb http://ftp.de.debian.org/debian/ wheezy main contrib non-free" > /etc/apt/sources.list
+	echo "deb-src http://ftp.de.debian.org/debian/ wheezy main" >> /etc/apt/sources.list
+	echo "deb http://security.debian.org/ wheezy/updates main" >> /etc/apt/sources.list
+	echo "deb-src http://security.debian.org/ wheezy/updates main" >> /etc/apt/sources.list
+}
+
+# Upgrade from deb6 to deb7
+function upgrade_to_wheezy {
+	check "dpkg --get-selections"
+	echo "Please check if packets are on Hold ... sleeping for 10sec"
+	sleep 10
+	check "apt-get clean"
+	check "apt-get update"
+	check "apt-get dist-upgrade"
+	echo "Done ... please reboot now"
+}
+
+# set the locales correctly
+function set_locales {
+	export LANGUAGE=de_DE.UTF-8
+	export LANG=de_DE.UTF-8
+	export LC_ALL=de_DE.UTF-8
+	locale-gen de_DE.UTF-8
+	dpkg-reconfigure locales
+}
+
+# reinstall the MySQL server and force the upgrade again
+function reinstall_mysql {
+	check "apt-get remove mysql-server"
+	check "rm -Rf /var/lib/mysql/*"
+	check "apt-get install mysql-server"
+	echo "Doing Mysql Upgrade in 5 seconds"
+  	sleep 5
+	check "bunzip2 -d /root/dump-lportal-before-upgrade-$DATE.bz2"
+	sleep 5
+	mysql < /root/dump-lportal-before-upgrade-$DATE
+	sleep 5
+	mysqlcheck --all-databases
+}
+
+# Fix the mysql problem
+function fix_mysql {
+	check "sed -i -e s/skip\-bdb/#skip\-bdb/g /etc/mysql/my.cnf"
+}
+
+# Fix the Liferay Init Script, we must add the LSB Header
+# for the new dependency based boot system style
+function fix_liferay_init {
+
+	liferay_file="/etc/init.d/liferay"
+	liferay_tmpfile="/root/liferay"
+
+	# move org file away
+	mv $liferay_file $liferay_tmpfile
+
+	echo "#!/bin/bash" > $liferay_file
+	echo "" >> $liferay_file
+	echo "### BEGIN INIT INFO" >> $liferay_file
+	echo "# Provides:          liferay" >> $liferay_file
+	echo "# Required-Start:    $network $local_fs" >> $liferay_file
+	echo "# Required-Stop:     $network $local_fs" >> $liferay_file
+	echo "# Default-Start:     2 3 4 5" >> $liferay_file
+	echo "# Default-Stop:      0 1 6" >> $liferay_file
+	echo "# Short-Description: The Liferay Tomcat Service" >> $liferay_file
+	echo "# Description:       This service will start the Tomcat Server" >> $liferay_file
+	echo "#                    where the Liferay instance will run." >> $liferay_file
+	echo "### END INIT INFO" >> $liferay_file
+	echo ""
+	tail -n+2 $liferay_tmpfile >> $liferay_file
+	chmod +x $liferay_file
+	rm $liferay_tmpfile
+
+}
+
+# Fix the nrpe Init Script, we must add the LSB Header
+# for the new dependency based boot system style
+function fix_nrpe_init {
+
+        nrpe_file="/etc/init.d/nrpe"
+        nrpe_tmpfile="/root/nrpe"
+
+        # move org file away
+        mv $nrpe_file $nrpe_tmpfile
+
+        echo "#!/bin/sh" > $nrpe_file
+        echo "" >> $nrpe_file
+        echo "### BEGIN INIT INFO" >> $nrpe_file
+        echo "# Provides:          nrpe" >> $nrpe_file
+        echo "# Required-Start:    $network $local_fs" >> $nrpe_file
+        echo "# Required-Stop:     $network $local_fs" >> $nrpe_file
+        echo "# Default-Start:     2 3 4 5" >> $nrpe_file
+        echo "# Default-Stop:      0 1 6" >> $nrpe_file
+        echo "# Short-Description: The nrpe Service" >> $nrpe_file
+        echo "# Description:       This service will start the Nagios Remote Plugin Executor" >> $nrpe_file
+        echo "#                    where the nrpe instance will run." >> $nrpe_file
+        echo "### END INIT INFO" >> $nrpe_file
+        echo "" >> $nrpe_file
+        echo "" >> $nrpe_file
+        tail -n+2 $nrpe_tmpfile >> $nrpe_file
+        chmod +x $nrpe_file
+        rm $nrpe_tmpfile
+
+}
+
+
+function main {
+
+	function vm_213 {
+
+		if [ "$stop_services" == "1" ]
+			then
+			echo "Stopping Services"
+			stop_services_vm213
+		fi
+
+		if [ "$upgradeto6" == "1" ]
+			then
+			echo "Upgrading to Debian 6 now ..."
+			edit_sources_squeeze
+			fix_nrpe_init
+			upgrade_to_squeeze
+     		touch /etc/apache2/httpd.conf
+		fi
+
+		if [ "$upgradeto7" == "1" ]
+			then
+			echo "Upgrading to Debian 7 now ..."
+			edit_sources_wheezy
+			upgrade_to_wheezy
+     		touch /etc/apache2/httpd.conf
+		fi
+
+	}
+
+	function vm_214 {
+
+		if [ "$stop_services" == "1" ]
+			then
+			echo "Stopping Services"
+			stop_services_vm214
+		fi
+
+		if [ "$upgradeto6" == "1" ]
+			then
+			echo "Upgrading to Debian 6 now ..."
+			edit_sources_squeeze
+			fix_nrpe_init
+			fix_liferay_init
+			upgrade_to_squeeze
+		fi
+
+		if [ "$upgradeto7" == "1" ]
+			then
+			echo "Upgrading to Debian 7 now ..."
+			edit_sources_wheezy
+			upgrade_to_wheezy
+
+			#make liferay boot safe
+			insserv liferay
+		fi
+	}
+
+	function vm_215 {
+
+		if [ "$backup_db" == "1" ]
+			then
+			echo "Backing up DB"
+		      sleep 5
+		      mysqldump --all-databases --opt |/bin/bzip2 -9 > /root/dump-lportal-before-upgrade-$DATE.bz2
+		fi
+
+
+		if [ "$stop_services" == "1" ]
+			then
+			echo "Stopping Services"
+			stop_services_vm215
+		fi
+
+		if [ "$upgradeto6" == "1" ]
+			then
+			echo "Upgrading to Debian 6 now ..."
+   			edit_sources_squeeze
+		   	fix_nrpe_init
+   			upgrade_to_squeeze
+		fi
+
+		if [ "$upgradeto7" == "1" ]
+			then
+	   		echo "Upgrading to Debian 7 now ..."
+	   		edit_sources_wheezy
+		   	upgrade_to_wheezy
+		fi
+
+		if [ "$fix_mysql" == "1" ]
+			then
+   			echo "Fixing the MySQL Conf and reinstalling ..."
+	   		fix_mysql
+		   	reinstall_mysql
+		fi
+
+
+	}
+
+	case "$HOST" in 
+
+			vm213 ) echo "We are on Host $HOST"
+				  vm_213
+				  ;;
+			vm214 ) echo "We are on Host $HOST"
+				  vm_214
+				  ;;
+			vm215 ) echo "We are on Host $HOST"
+				  vm_215
+				  ;;
+			* ) 	  echo "Sorry but your Host $HOST is not supported"
+				  ;;
+	esac
+
+}
+
+# getopts function
+options='S67MBh'
+while getopts $options option
+    do
+       case $option in
+           S ) stop_services="1";;
+           6 ) upgradeto6="1";;
+           7 ) upgradeto7="1";;
+           M ) fix_mysql="1";;
+           B ) backup_db="1";;
+           h ) showhelp ;;
+           * ) showhelp ;;
+           \?) echo "Unknown option: -$OPTARG" >&2; showhelp;;
+           : ) echo "Missing option argument for -$OPTARG" >&2; showhelp;;
+       esac
+    done
+
+# check that some parameters are set
+if [ $OPTIND -eq 1 ]; then echo "No options were passed, please call with the following"; showhelp; fi
+shift $OPTIND
+
+# start the script
+main
